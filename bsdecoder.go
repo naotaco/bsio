@@ -1,10 +1,11 @@
 package bsdecoder
 
 import (
-	"errors"
+	//	"errors"
 	"io"
 
 	"fmt"
+	"github.com/pkg/errors"
 )
 
 type ByteOrder interface {
@@ -25,7 +26,9 @@ var BigEndian bigEndian
 type littleEndian struct{}
 
 func (littleEndian) Uint8(b []byte, o uint, l uint) (uint8, error) {
-
+	if o == 0 && l == 8 {
+		return b[0], nil
+	}
 	return 0, nil
 }
 
@@ -44,6 +47,36 @@ func Read(r io.Reader, order ByteOrder, data interface{}, length int) error {
 	}
 
 	fmt.Printf("size of data: %d bit(s).\n", s)
+
+	if s%8 == 0 {
+		// fast path: just read by io.ReadFull
+		var b [8]byte
+		bs := b[:(s / 8)]
+		if _, err := io.ReadFull(r, bs); err != nil {
+			return errors.Wrap(err, "Failed to read by io.ReadFull")
+		}
+
+		switch data := data.(type) {
+		case *uint8:
+			var err error
+			*data, err = order.Uint8(bs, 0, 8)
+			if err != nil {
+				return errors.Wrap(err, "Failed to convert to uint8")
+			}
+		default:
+			return errors.New("Other than uint8 is not supported for now.")
+		}
+
+		return nil
+
+	} else {
+		return read(r, order, data, length)
+	}
+
+	return nil
+}
+
+func read(r io.Reader, order ByteOrder, data interface{}, length int) error {
 	return nil
 }
 
