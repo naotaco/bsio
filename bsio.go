@@ -4,6 +4,7 @@ import (
 	//	"errors"
 	"io"
 
+	"encoding/binary"
 	"fmt"
 	"github.com/pkg/errors"
 )
@@ -38,32 +39,34 @@ type Reader struct {
 	buf   []byte
 	rd    io.Reader
 	order ByteOrder
-	rp    int  // read pointer
-	last  byte // last 1-byte data
+
+	last byte // last 1-byte data
+	rp   uint // read pointer of last data. 0-7
 }
 
 func NewReader(r io.Reader, order ByteOrder) *Reader {
 	b := new(Reader)
 	b.rd = r
 	b.order = order
+	b.rp = 0
 	return b
 }
 
 // order: bsdecoder.LittleEndian
 // data: pointer to data that will be output
 // length: specify read length in bit
-func (this *Reader) Read(data interface{}, length int) error {
+func (this *Reader) Read(data interface{}, length uint) error {
 	s := maxDataSize(data)
 	if s == 0 {
 		return errors.New("given type is not supported.")
 	}
-	if s < length {
+	if uint(s) < length {
 		return errors.New(fmt.Sprintf("Given length (0x%x) is longer than given data type.", length))
 	}
 
 	fmt.Printf("size of data: %d bit(s).\n", s)
 
-	if s%8 == 0 {
+	if s%8 == 0 && this.rp == 0 && length%8 == 0 {
 		// fast path: just read by io.ReadFull
 		var b [8]byte
 		bs := b[:(s / 8)]
@@ -91,7 +94,53 @@ func (this *Reader) Read(data interface{}, length int) error {
 	return nil
 }
 
-func (this *Reader) read(data interface{}, length int) error {
+const (
+	l0 = 0x00
+	l1 = 0x80
+	l2 = 0xC0
+	l3 = 0xE0
+	l4 = 0xF0
+	l5 = 0xF8
+	l6 = 0xFC
+	l7 = 0xFE
+	l8 = 0xFF
+)
+
+var lemask = []byte{l0, l1, l2, l3, l4, l5, l6, l7, l8}
+
+func (this *Reader) read(data interface{}, length uint) error {
+
+	if this.rp == 0 {
+		// no data loaded to last
+		err := binary.Read(this.rd, binary.LittleEndian, &(this.last))
+		if err != nil {
+			return errors.Wrap(err, "Failed to read next byte")
+		}
+		fmt.Printf("new last: %x\n", this.last)
+	}
+
+	// enough data in last byte.
+	if (uint(8) - this.rp) >= uint(length) {
+		var d int
+		d = int(((this.last << this.rp) & lemask[length]) >> (8 - length))
+		fmt.Printf("read: 0x%x\n", d)
+
+		switch data := data.(type) {
+		case *uint8:
+			fmt.Printf("read: 0x%x\n", d)
+			*data = uint8(d)
+		default:
+			return errors.New("Other than uint8 is not supported for now.")
+		}
+		this.rp += length
+		if this.rp == 8 {
+			this.rp = 0
+			this.last = 0
+
+		}
+	} else {
+		fmt.Println("not supported now")
+	}
 	return nil
 }
 
