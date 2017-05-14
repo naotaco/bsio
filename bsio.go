@@ -1,4 +1,4 @@
-package bsdecoder
+package bsio
 
 import (
 	//	"errors"
@@ -34,10 +34,25 @@ func (littleEndian) Uint8(b []byte, o uint, l uint) (uint8, error) {
 
 type bigEndian struct{}
 
+type Reader struct {
+	buf   []byte
+	rd    io.Reader
+	order ByteOrder
+	rp    int  // read pointer
+	last  byte // last 1-byte data
+}
+
+func NewReader(r io.Reader, order ByteOrder) *Reader {
+	b := new(Reader)
+	b.rd = r
+	b.order = order
+	return b
+}
+
 // order: bsdecoder.LittleEndian
 // data: pointer to data that will be output
 // length: specify read length in bit
-func Read(r io.Reader, order ByteOrder, data interface{}, length int) error {
+func (this *Reader) Read(data interface{}, length int) error {
 	s := maxDataSize(data)
 	if s == 0 {
 		return errors.New("given type is not supported.")
@@ -52,14 +67,14 @@ func Read(r io.Reader, order ByteOrder, data interface{}, length int) error {
 		// fast path: just read by io.ReadFull
 		var b [8]byte
 		bs := b[:(s / 8)]
-		if _, err := io.ReadFull(r, bs); err != nil {
+		if _, err := io.ReadFull(this.rd, bs); err != nil {
 			return errors.Wrap(err, "Failed to read by io.ReadFull")
 		}
 
 		switch data := data.(type) {
 		case *uint8:
 			var err error
-			*data, err = order.Uint8(bs, 0, 8)
+			*data, err = this.order.Uint8(bs, 0, 8)
 			if err != nil {
 				return errors.Wrap(err, "Failed to convert to uint8")
 			}
@@ -70,13 +85,13 @@ func Read(r io.Reader, order ByteOrder, data interface{}, length int) error {
 		return nil
 
 	} else {
-		return read(r, order, data, length)
+		return this.read(data, length)
 	}
 
 	return nil
 }
 
-func read(r io.Reader, order ByteOrder, data interface{}, length int) error {
+func (this *Reader) read(data interface{}, length int) error {
 	return nil
 }
 
