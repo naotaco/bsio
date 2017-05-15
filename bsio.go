@@ -110,37 +110,52 @@ var lemask = []byte{l0, l1, l2, l3, l4, l5, l6, l7, l8}
 
 func (this *Reader) read(data interface{}, length uint) error {
 
-	if this.rp == 0 {
-		// no data loaded to last
-		err := binary.Read(this.rd, binary.LittleEndian, &(this.last))
-		if err != nil {
-			return errors.Wrap(err, "Failed to read next byte")
+	var sum int64
+	for {
+		if this.rp == 0 {
+			// no data to process: load 1 byte
+			err := binary.Read(this.rd, binary.LittleEndian, &(this.last))
+			if err != nil {
+				return errors.Wrap(err, "Failed to read next byte")
+			}
+			// fmt.Printf("new last: 0x%x\n", this.last)
 		}
-		fmt.Printf("new last: %x\n", this.last)
-	}
 
-	// enough data in last byte.
-	if (uint(8) - this.rp) >= uint(length) {
-		var d int
-		d = int(((this.last << this.rp) & lemask[length]) >> (8 - length))
-		fmt.Printf("read: 0x%x\n", d)
-
-		switch data := data.(type) {
-		case *uint8:
-			fmt.Printf("read: 0x%x\n", d)
-			*data = uint8(d)
-		default:
-			return errors.New("Other than uint8 is not supported for now.")
+		// read length
+		r_length := length
+		remain := uint(8) - this.rp
+		if length > remain {
+			r_length = remain
 		}
-		this.rp += length
+
+		d := int64(((this.last << this.rp) & lemask[r_length]) >> (8 - r_length))
+		sum = (sum << r_length) + d
+		fmt.Printf("last: %02x rp: %x r_len: %x d: %x sum: %x\n", this.last, this.rp, r_length, d, sum)
+
+		// increment read pointer
+		this.rp += r_length
+		length -= r_length
+
 		if this.rp == 8 {
 			this.rp = 0
 			this.last = 0
-
 		}
-	} else {
-		fmt.Println("not supported now")
+
+		if length == 0 {
+			break
+		}
+
 	}
+
+	// store data to each types
+	switch data := data.(type) {
+	case *uint8:
+		fmt.Printf("read: 0x%x\n", sum)
+		*data = uint8(sum)
+	default:
+		return errors.New("Other than uint8 is not supported for now.")
+	}
+
 	return nil
 }
 
