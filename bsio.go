@@ -12,7 +12,7 @@ import (
 type ByteOrder interface {
 	Uint8([]byte, uint, uint) (uint8, error)
 	// Uint16([]byte, uint, uint) (uint16, error)
-	// Uint32([]byte, uint, uint) (uint32, error)
+	Uint32([]byte, uint, uint) (uint32, error)
 	// Uint64([]byte, uint, uint) (uint64, error)
 	// PutUint8([]byte, uint8)
 	// PutUint16([]byte, uint16)
@@ -29,6 +29,22 @@ type littleEndian struct{}
 func (littleEndian) Uint8(b []byte, o uint, l uint) (uint8, error) {
 	if o == 0 && l == 8 {
 		return b[0], nil
+	}
+	return 0, nil
+}
+
+func (littleEndian) Uint32(b []byte, o uint, l uint) (uint32, error) {
+	if o == 0 {
+		switch l {
+		case 8:
+			return uint32(b[0]), nil
+		case 16:
+			return uint32(b[0]) | (uint32(b[1]) << 8), nil
+		case 24:
+			return uint32(b[0]) | (uint32(b[1]) << 8) | (uint32(b[2]) << 16), nil
+		case 32:
+			return uint32(b[0]) | (uint32(b[1]) << 8) | (uint32(b[2]) << 16) | (uint32(b[3]) << 24), nil
+		}
 	}
 	return 0, nil
 }
@@ -67,48 +83,56 @@ func (this *Reader) Read(data interface{}, length uint) error {
 	fmt.Printf("size of data: %d bit(s).\n", s)
 
 	if s%8 == 0 && this.rp == 0 && length%8 == 0 {
-		// fast path: just read by io.ReadFull
-		var b [8]byte
-		bs := b[:(s / 8)]
-		if _, err := io.ReadFull(this.rd, bs); err != nil {
-			return errors.Wrap(err, "Failed to read by io.ReadFull")
-		}
-
-		switch data := data.(type) {
-		case *uint8:
-			var err error
-			*data, err = this.order.Uint8(bs, 0, 8)
-			if err != nil {
-				return errors.Wrap(err, "Failed to convert to uint8")
-			}
-		default:
-			return errors.New("Other than uint8 is not supported for now.")
-		}
-
-		return nil
-
+		return this.readBytes(data, length)
 	} else {
-		return this.read(data, length)
+		return this.readBit(data, length)
 	}
 
 	return nil
 }
 
-const (
-	l0 = 0x00
-	l1 = 0x80
-	l2 = 0xC0
-	l3 = 0xE0
-	l4 = 0xF0
-	l5 = 0xF8
-	l6 = 0xFC
-	l7 = 0xFE
-	l8 = 0xFF
-)
+func (this *Reader) readBytes(data interface{}, length uint) error {
+	var b [8]byte
+	bs := b[:(length / 8)]
+	if _, err := io.ReadFull(this.rd, bs); err != nil {
+		return errors.Wrap(err, "Failed to read by io.ReadFull")
+	}
 
-var lemask = []byte{l0, l1, l2, l3, l4, l5, l6, l7, l8}
+	switch data := data.(type) {
+	case *uint8:
+		var err error
+		*data, err = this.order.Uint8(bs, 0, length)
+		if err != nil {
+			return errors.Wrap(err, "Failed to convert to uint8")
+		}
+	case *uint32:
+		var err error
+		*data, err = this.order.Uint32(bs, 0, length)
+		if err != nil {
+			return errors.Wrap(err, "Failed to convert to uint8")
+		}
+	default:
+		return errors.New("Other than uint8 is not supported for now.")
+	}
 
-func (this *Reader) read(data interface{}, length uint) error {
+	return nil
+}
+
+// const (
+// 	l0 = 0x00
+// 	l1 = 0x80
+// 	l2 = 0xC0
+// 	l3 = 0xE0
+// 	l4 = 0xF0
+// 	l5 = 0xF8
+// 	l6 = 0xFC
+// 	l7 = 0xFE
+// 	l8 = 0xFF
+// )
+
+// var lemask = []byte{l0, l1, l2, l3, l4, l5, l6, l7, l8}
+
+func (this *Reader) readBit(data interface{}, length uint) error {
 
 	var sum int64
 	for {
@@ -128,8 +152,10 @@ func (this *Reader) read(data interface{}, length uint) error {
 			r_length = remain
 		}
 
-		d := int64(((this.last << this.rp) & lemask[r_length]) >> (8 - r_length))
+		// note: littleEndian
+		d := int64((this.last << this.rp) >> (8 - r_length))
 		sum = (sum << r_length) + d
+
 		fmt.Printf("last: %02x rp: %x r_len: %x d: %x sum: %x\n", this.last, this.rp, r_length, d, sum)
 
 		// increment read pointer
@@ -152,6 +178,8 @@ func (this *Reader) read(data interface{}, length uint) error {
 	case *uint8:
 		fmt.Printf("read: 0x%x\n", sum)
 		*data = uint8(sum)
+	case *uint32:
+		*data = uint32(sum)
 	default:
 		return errors.New("Other than uint8 is not supported for now.")
 	}
